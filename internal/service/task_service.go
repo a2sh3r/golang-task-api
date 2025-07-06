@@ -6,8 +6,10 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/a2sh3r/golang-task-api.git/internal/logger"
 	"github.com/a2sh3r/golang-task-api.git/internal/models"
 	"github.com/a2sh3r/golang-task-api.git/internal/repository"
+	"go.uber.org/zap"
 )
 
 type TaskService interface {
@@ -37,6 +39,7 @@ func (s *taskService) CreateTask(ctx context.Context, title string, description 
 	}
 
 	if err := s.repo.Create(ctx, newTask); err != nil {
+		logger.Log.Error("failed to create task", zap.Error(err))
 		return "", err
 	}
 
