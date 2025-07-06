@@ -7,7 +7,7 @@ import (
 )
 
 type Config struct {
-	RunAddress string `env:"RUN_ADDRESS" envDefault:"localhost:8084"`
+	RunAddress string `env:"RUN_ADDRESS" envDefault:"localhost:8080"`
 }
 
 func LoadConfig() (*Config, error) {

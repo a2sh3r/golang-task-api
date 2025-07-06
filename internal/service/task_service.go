@@ -55,7 +55,9 @@ func (s *taskService) CreateTask(ctx context.Context, title string, description 
 		}
 
 		newTask.Duration = duration
-		_ = s.repo.Update(ctx, newTask)
+		if err := s.repo.Update(context.Background(), newTask); err != nil {
+			logger.Log.Error("error while updating task status", zap.Error(err))
+		}
 	}()
 
 	return id, nil
