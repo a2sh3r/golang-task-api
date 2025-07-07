@@ -7,7 +7,9 @@ import (
 )
 
 type Config struct {
-	RunAddress string `env:"RUN_ADDRESS" envDefault:"localhost:8080"`
+	RunAddress      string `env:"RUN_ADDRESS" envDefault:"localhost:8080"`
+	FileStoragePath string `env:"FILE_STORAGE_PATH" envDefault:"/tmp/task-db.json"`
+	StoreInterval   int    `env:"STORE_INTERVAL" envDefault:"3"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -19,13 +21,27 @@ func LoadConfig() (*Config, error) {
 }
 
 func (cfg *Config) ParseFlags() {
-	var runAddress string
+	var (
+		runAddress    string
+		filePath      string
+		storeInterval int
+	)
 
 	flag.StringVar(&runAddress, "a", "", "address host:port")
+	flag.StringVar(&filePath, "f", "", "file storage path for saving/loading inmemory data")
+	flag.IntVar(&storeInterval, "i", 0, "file storage time interval")
 
 	flag.Parse()
 
 	if runAddress != "" {
 		cfg.RunAddress = runAddress
+	}
+
+	if filePath != "" {
+		cfg.FileStoragePath = filePath
+	}
+
+	if storeInterval != 0 {
+		cfg.StoreInterval = storeInterval
 	}
 }
