@@ -20,6 +20,7 @@ type App struct {
 	taskRepo    repository.TaskRepository
 	shutdownCtx context.Context
 	cancelFunc  context.CancelFunc
+	cfg         *config.Config
 }
 
 func NewApp() (*App, error) {
@@ -66,6 +67,7 @@ func NewApp() (*App, error) {
 		taskRepo:    taskRepo,
 		shutdownCtx: ctx,
 		cancelFunc:  cancel,
+		cfg:         cfg,
 	}
 
 	go repository.StartAutoSave(
@@ -104,6 +106,16 @@ func (a *App) Shutdown(ctx context.Context) error {
 	a.cancelFunc()
 
 	logger.Log.Info("shutting down server...")
+	if err := a.server.Shutdown(ctx); err != nil {
+		logger.Log.Error("server shutdown failed", zap.Error(err))
+		return err
+	}
+
+	repository.SaveTasksToFile(
+		a.cfg.FileStoragePath,
+		a.taskRepo.GetAll(context.Background()),
+	)
+
 	if err := a.server.Shutdown(ctx); err != nil {
 		logger.Log.Error("server shutdown failed", zap.Error(err))
 		return err
