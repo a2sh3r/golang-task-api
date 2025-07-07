@@ -22,6 +22,7 @@ func NewRouter(handler *Handler) chi.Router {
 	r := chi.NewRouter()
 
 	r.Use(middleware.NewLoggingMiddleware())
+	r.Use(middleware.NewGzipMiddleware())
 
 	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowerd", http.StatusMethodNotAllowed)
