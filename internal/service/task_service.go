@@ -6,8 +6,10 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/a2sh3r/golang-task-api.git/internal/logger"
 	"github.com/a2sh3r/golang-task-api.git/internal/models"
 	"github.com/a2sh3r/golang-task-api.git/internal/repository"
+	"go.uber.org/zap"
 )
 
 type TaskService interface {
@@ -27,7 +29,7 @@ func NewTaskService(repo repository.TaskRepository) TaskService {
 }
 
 func (s *taskService) CreateTask(ctx context.Context, title string, description string) (string, error) {
-	id := generateUniqueId()
+	id := generateUniqueID()
 	newTask := models.Task{
 		ID:          id,
 		Status:      models.Pending,
@@ -37,10 +39,11 @@ func (s *taskService) CreateTask(ctx context.Context, title string, description 
 	}
 
 	if err := s.repo.Create(ctx, newTask); err != nil {
+		logger.Log.Error("failed to create task", zap.Error(err))
 		return "", err
 	}
 
-	// Имитация обработки задачи
+	// Имитация обработки задачи согласно ТЗ
 	go func() {
 		duration := time.Duration(3+rand.Intn(3)) * time.Second
 		time.Sleep(duration)
@@ -52,7 +55,9 @@ func (s *taskService) CreateTask(ctx context.Context, title string, description 
 		}
 
 		newTask.Duration = duration
-		_ = s.repo.Update(ctx, newTask)
+		if err := s.repo.Update(context.Background(), newTask); err != nil {
+			logger.Log.Error("error while updating task status", zap.Error(err))
+		}
 	}()
 
 	return id, nil
@@ -66,6 +71,6 @@ func (s *taskService) DeleteTask(ctx context.Context, id string) error {
 	return s.repo.Delete(ctx, id)
 }
 
-func generateUniqueId() string {
+func generateUniqueID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
