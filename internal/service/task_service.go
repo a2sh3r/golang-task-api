@@ -29,7 +29,7 @@ func NewTaskService(repo repository.TaskRepository) TaskService {
 }
 
 func (s *taskService) CreateTask(ctx context.Context, title string, description string) (string, error) {
-	id := generateUniqueId()
+	id := generateUniqueID()
 	newTask := models.Task{
 		ID:          id,
 		Status:      models.Pending,
@@ -71,6 +71,6 @@ func (s *taskService) DeleteTask(ctx context.Context, id string) error {
 	return s.repo.Delete(ctx, id)
 }
 
-func generateUniqueId() string {
+func generateUniqueID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
