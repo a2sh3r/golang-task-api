@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/a2sh3r/golang-task-api.git/internal/config"
 	"github.com/a2sh3r/golang-task-api.git/internal/logger"
+	"github.com/a2sh3r/golang-task-api.git/internal/models"
 	"github.com/a2sh3r/golang-task-api.git/internal/repository"
 	"github.com/a2sh3r/golang-task-api.git/internal/server"
 	"github.com/a2sh3r/golang-task-api.git/internal/service"
@@ -16,8 +16,10 @@ import (
 )
 
 type App struct {
-	server   *http.Server
-	taskRepo repository.TaskRepository
+	server      *http.Server
+	taskRepo    repository.TaskRepository
+	shutdownCtx context.Context
+	cancelFunc  context.CancelFunc
 }
 
 func NewApp() (*App, error) {
@@ -34,7 +36,18 @@ func NewApp() (*App, error) {
 	logger.Log.Info("Server is starting",
 		zap.String("address", cfg.RunAddress))
 
+	tasks, err := repository.LoadTasksFromFile(cfg.FileStoragePath)
+	if err != nil {
+		logger.Log.Warn("Could not load tasks from file, starting fresh", zap.Error(err))
+	}
+
 	taskRepo := repository.NewTaskRepository()
+	for _, task := range tasks {
+		if err := taskRepo.Create(context.Background(), task); err != nil {
+			logger.Log.Error("Failed to restore task", zap.String("task_id", task.ID), zap.Error(err))
+		}
+	}
+
 	taskService := service.NewTaskService(taskRepo)
 
 	handler := server.NewHandler(taskService)
@@ -46,10 +59,25 @@ func NewApp() (*App, error) {
 		Handler: r,
 	}
 
-	return &App{
-		server:   server,
-		taskRepo: taskRepo,
-	}, nil
+	ctx, cancel := context.WithCancel(context.Background())
+
+	app := &App{
+		server:      server,
+		taskRepo:    taskRepo,
+		shutdownCtx: ctx,
+		cancelFunc:  cancel,
+	}
+
+	go repository.StartAutoSave(
+		app.shutdownCtx,
+		cfg.FileStoragePath,
+		func() []models.Task {
+			return app.taskRepo.GetAll(context.Background())
+		},
+		cfg.StoreInterval,
+	)
+
+	return app, nil
 }
 
 func (a *App) Run(parentCtx context.Context) error {
@@ -73,11 +101,10 @@ func (a *App) Run(parentCtx context.Context) error {
 }
 
 func (a *App) Shutdown(ctx context.Context) error {
-	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	a.cancelFunc()
 
 	logger.Log.Info("shutting down server...")
-	if err := a.server.Shutdown(shutdownCtx); err != nil {
+	if err := a.server.Shutdown(ctx); err != nil {
 		logger.Log.Error("server shutdown failed", zap.Error(err))
 		return err
 	}
