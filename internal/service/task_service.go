@@ -43,7 +43,7 @@ func (s *taskService) CreateTask(ctx context.Context, title string, description 
 		return "", err
 	}
 
-	// Имитация обработки задачи
+	// Имитация обработки задачи согласно ТЗ
 	go func() {
 		duration := time.Duration(3+rand.Intn(3)) * time.Second
 		time.Sleep(duration)
