@@ -1,40 +1,202 @@
-# Тестовое задание Golang-Task-API
+# Golang Task API
 
-## Техническое задание
+REST API для управления задачами (TODO-лист), реализованное на Go с использованием Fiber и PostgreSQL.
 
-Разработать HTTP-сервис на языке Go, который позволяет создавать, отслеживать и удалять долгие асинхронные задачи (I/O bound), имитирующие продолжительную работу (3–5 минут). Все данные должны храниться в памяти без использования внешних систем.
+## Технологии
 
-## Описание API
+- **Go 1.24** - основной язык программирования
+- **Fiber** - веб-фреймворк
+- **PostgreSQL** - база данных
+- **pgx** - драйвер для PostgreSQL
+- **Docker** - контейнеризация
 
-`POST /api/tasks` - регистрация задачи в системе
+## Структура проекта
 
-`GET /api/tasks/{task_id}` - получение информации о задаче по task_id
+```
+golang-task-api/
+├── cmd/
+│   └── main.go                 # Точка входа приложения
+├── internal/
+│   ├── config/                 # Конфигурация
+│   ├── db/                     # Подключение к БД
+│   ├── logger/                 # Логирование
+│   ├── middleware/             # Middleware
+│   ├── migrations/             # Миграции БД
+│   ├── models/                 # Модели данных
+│   ├── repository/             # Репозитории
+│   ├── server/                 # HTTP сервер
+│   ├── service/                # Бизнес-логика
+│   └── startup/                # Инициализация приложения
+├── Dockerfile                  # Docker образ
+├── docker-compose.yml          # Docker Compose
+└── README.md                   # Документация
+```
 
-`DELETE /api/tasks/{task_id}` - удаление задачи из системы
+## API Endpoints
 
-## Флаги
+### Создание задачи
+```http
+POST /tasks
+Content-Type: application/json
 
-- -a - Адресс сервера host:port - значение по-умолчанию "localhost:8080"
-- -f - Путь до файла сохранения/выгрузки данных	- значение по умолчанию "/tmp/task-db.json"
-- -i - Интервал сохранения данных в файл (указывается целое число секунд) - значение по умолчанию "3 cекунды"    
+{
+  "title": "Название задачи",
+  "description": "Описание задачи"
+}
+```
 
-## Требования
+**Ответ:**
+```json
+{
+  "id": 1,
+  "title": "Название задачи",
+  "description": "Описание задачи",
+  "status": "new",
+  "created_at": "2024-01-01T12:00:00Z",
+  "updated_at": "2024-01-01T12:00:00Z"
+}
+```
 
-Go - v1.24.4
+### Получение списка всех задач
+```http
+GET /tasks
+```
+
+**Ответ:**
+```json
+[
+  {
+    "id": 1,
+    "title": "Название задачи",
+    "description": "Описание задачи",
+    "status": "new",
+    "created_at": "2024-01-01T12:00:00Z",
+    "updated_at": "2024-01-01T12:00:00Z"
+  }
+]
+```
+
+### Получение задачи по ID
+```http
+GET /tasks/{id}
+```
+
+### Обновление задачи
+```http
+PUT /tasks/{id}
+Content-Type: application/json
+
+{
+  "title": "Обновленное название",
+  "description": "Обновленное описание",
+  "status": "in_progress"
+}
+```
+
+### Удаление задачи
+```http
+DELETE /tasks/{id}
+```
+
+## Статусы задач
+
+- `new` - новая задача
+- `in_progress` - в процессе выполнения
+- `done` - выполнена
 
 ## Запуск
 
-### Запуск исходного кода
+### С Docker (рекомендуется)
 
-1) Необходимо склонировать репозиторий
-`git clone https://github.com/a2sh3r/golang-task-api.git` и зайти внутрь директории
+1. Запустите приложение с помощью Docker Compose:
+   ```bash
+   docker-compose up --build
+   ```
 
-2) Произвести команду `go mod tidy`
+2. Приложение будет доступно по адресу `http://localhost:8080`
 
-3) Запустить сервер `go run ./сmd/main.go`
+### Локально
 
-### Запуск при помощи бинарного файла
+1. Установите PostgreSQL и создайте базу данных:
+   ```sql
+   CREATE DATABASE golangtaskapi;
+   ```
 
-1) Скачать бинарный файл соответствующий ОС из Releases
+2. Установите зависимости:
+   ```bash
+   go mod download
+   ```
 
-2) Запустить бинарный файл
+3. Запустите миграции:
+   ```bash
+   # Установите golang-migrate
+   go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+   
+   # Запустите миграции
+   migrate -path internal/migrations -database "postgres://postgres:postgres@localhost:5432/golangtaskapi?sslmode=disable" up
+   ```
+
+4. Запустите приложение:
+   ```bash
+   go run cmd/main.go
+   ```
+
+## Конфигурация
+
+Переменные окружения:
+
+- `RUN_ADDRESS` - адрес сервера (по умолчанию: `localhost:8080`)
+- `DATABASE_URI` - URI подключения к PostgreSQL (по умолчанию: `postgres://postgres:postgres@localhost:5432/golangtaskapi?sslmode=disable`)
+
+## Тестирование
+
+Запуск всех тестов:
+```bash
+go test ./... -v
+```
+
+Запуск тестов по модулям:
+```bash
+go test ./internal/service/... -v
+go test ./internal/server/... -v
+go test ./internal/middleware/... -v
+```
+
+## Структура базы данных
+
+```sql
+CREATE TABLE tasks (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT,
+    status TEXT CHECK (status IN ('new', 'in_progress', 'done')) DEFAULT 'new',
+    created_at TIMESTAMP DEFAULT now(),
+    updated_at TIMESTAMP DEFAULT now()
+);
+```
+
+## Примеры использования
+
+### Создание задачи
+```bash
+curl -X POST http://localhost:8080/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Изучить Go", "description": "Изучить основы языка Go"}'
+```
+
+### Получение всех задач
+```bash
+curl http://localhost:8080/tasks
+```
+
+### Обновление задачи
+```bash
+curl -X PUT http://localhost:8080/tasks/1 \
+  -H "Content-Type: application/json" \
+  -d '{"status": "in_progress"}'
+```
+
+### Удаление задачи
+```bash
+curl -X DELETE http://localhost:8080/tasks/1
+```

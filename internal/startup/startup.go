@@ -2,22 +2,22 @@ package startup
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net/http"
+	"time"
 
 	"github.com/a2sh3r/golang-task-api.git/internal/config"
 	"github.com/a2sh3r/golang-task-api.git/internal/logger"
-	"github.com/a2sh3r/golang-task-api.git/internal/models"
-	"github.com/a2sh3r/golang-task-api.git/internal/repository"
+	"github.com/a2sh3r/golang-task-api.git/internal/repository/postgres"
 	"github.com/a2sh3r/golang-task-api.git/internal/server"
 	"github.com/a2sh3r/golang-task-api.git/internal/service"
+	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
 type App struct {
-	server      *http.Server
-	taskRepo    repository.TaskRepository
+	app         *fiber.App
+	taskRepo    *postgres.TaskRepository
 	shutdownCtx context.Context
 	cancelFunc  context.CancelFunc
 	cfg         *config.Config
@@ -25,7 +25,6 @@ type App struct {
 
 func NewApp() (*App, error) {
 	cfg, err := config.LoadConfig()
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
@@ -37,57 +36,37 @@ func NewApp() (*App, error) {
 	logger.Log.Info("Server is starting",
 		zap.String("address", cfg.RunAddress))
 
-	tasks, err := repository.LoadTasksFromFile(cfg.FileStoragePath)
+	dbpool, err := pgxpool.New(context.Background(), cfg.DatabaseURI)
 	if err != nil {
-		logger.Log.Warn("Could not load tasks from file, starting fresh", zap.Error(err))
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	taskRepo := repository.NewTaskRepository()
-	for _, task := range tasks {
-		if err := taskRepo.Create(context.Background(), task); err != nil {
-			logger.Log.Error("Failed to restore task", zap.String("task_id", task.ID), zap.Error(err))
-		}
+	if err := dbpool.Ping(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
+	taskRepo := postgres.NewTaskRepository(dbpool)
 	taskService := service.NewTaskService(taskRepo)
-
 	handler := server.NewHandler(taskService)
-
-	r := server.NewRouter(handler)
-
-	server := &http.Server{
-		Addr:    cfg.RunAddress,
-		Handler: r,
-	}
+	app := server.NewRouter(handler)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	app := &App{
-		server:      server,
+	return &App{
+		app:         app,
 		taskRepo:    taskRepo,
 		shutdownCtx: ctx,
 		cancelFunc:  cancel,
 		cfg:         cfg,
-	}
-
-	go repository.StartAutoSave(
-		app.shutdownCtx,
-		cfg.FileStoragePath,
-		func() []models.Task {
-			return app.taskRepo.GetAll(context.Background())
-		},
-		cfg.StoreInterval,
-	)
-
-	return app, nil
+	}, nil
 }
 
 func (a *App) Run(parentCtx context.Context) error {
 	serverErrCh := make(chan error, 1)
 
 	go func() {
-		err := a.server.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		err := a.app.Listen(a.cfg.RunAddress)
+		if err != nil {
 			serverErrCh <- err
 			return
 		}
@@ -106,17 +85,11 @@ func (a *App) Shutdown(ctx context.Context) error {
 	a.cancelFunc()
 
 	logger.Log.Info("shutting down server...")
-	if err := a.server.Shutdown(ctx); err != nil {
-		logger.Log.Error("server shutdown failed", zap.Error(err))
-		return err
-	}
 
-	repository.SaveTasksToFile(
-		a.cfg.FileStoragePath,
-		a.taskRepo.GetAll(context.Background()),
-	)
+	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer shutdownCancel()
 
-	if err := a.server.Shutdown(ctx); err != nil {
+	if err := a.app.ShutdownWithContext(shutdownCtx); err != nil {
 		logger.Log.Error("server shutdown failed", zap.Error(err))
 		return err
 	}

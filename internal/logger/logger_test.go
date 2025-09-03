@@ -38,7 +38,7 @@ func TestInitialize(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, Log)
-				// Проверим, что Log не nil и не zap.NewNop()
+			
 				assert.IsType(t, &zap.Logger{}, Log)
 			}
 		})

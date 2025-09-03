@@ -1,44 +1,39 @@
 package middleware
 
 import (
-	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestLoggingMiddleware_Basic(t *testing.T) {
-	called := false
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-		w.WriteHeader(http.StatusTeapot)
-		w.Write([]byte("hello"))
+func TestNewLoggingMiddleware(t *testing.T) {
+	app := fiber.New()
+	middleware := NewLoggingMiddleware()
+
+	app.Use(middleware)
+	app.Get("/test", func(c *fiber.Ctx) error {
+		return c.SendString("test")
 	})
 
-	mw := NewLoggingMiddleware()
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	resp, _ := app.Test(req)
 
-	mw(handler).ServeHTTP(w, req)
-
-	assert.True(t, called)
-	assert.Equal(t, http.StatusTeapot, w.Code)
-	assert.Equal(t, "hello", w.Body.String())
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
-func TestLoggingMiddleware_StatusAndSize(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte("abc"))
+func TestNewLoggingMiddleware_WithError(t *testing.T) {
+	app := fiber.New()
+	middleware := NewLoggingMiddleware()
+
+	app.Use(middleware)
+	app.Get("/error", func(c *fiber.Ctx) error {
+		return fiber.NewError(fiber.StatusInternalServerError, "test error")
 	})
 
-	mw := NewLoggingMiddleware()
-	req := httptest.NewRequest(http.MethodGet, "/size", nil)
-	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/error", nil)
+	resp, _ := app.Test(req)
 
-	mw(handler).ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusCreated, w.Code)
-	assert.Equal(t, "abc", w.Body.String())
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
 }

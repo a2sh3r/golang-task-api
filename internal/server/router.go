@@ -1,42 +1,44 @@
 package server
 
 import (
-	"net/http"
-
 	"github.com/a2sh3r/golang-task-api.git/internal/middleware"
 	"github.com/a2sh3r/golang-task-api.git/internal/service"
-	"github.com/go-chi/chi/v5"
+	"github.com/gofiber/fiber/v2"
 )
 
 type Handler struct {
-	taskService service.TaskService
+	taskService service.TaskServiceInterface
 }
 
-func NewHandler(taskService service.TaskService) *Handler {
+func NewHandler(taskService service.TaskServiceInterface) *Handler {
 	return &Handler{
 		taskService: taskService,
 	}
 }
 
-func NewRouter(handler *Handler) chi.Router {
-	r := chi.NewRouter()
-
-	r.Use(middleware.NewLoggingMiddleware())
-	r.Use(middleware.NewGzipMiddleware())
-
-	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Method not allowerd", http.StatusMethodNotAllowed)
+func NewRouter(handler *Handler) *fiber.App {
+	app := fiber.New(fiber.Config{
+		ErrorHandler: func(c *fiber.Ctx, err error) error {
+			code := fiber.StatusInternalServerError
+			if e, ok := err.(*fiber.Error); ok {
+				code = e.Code
+			}
+			return c.Status(code).JSON(fiber.Map{
+				"error": err.Error(),
+			})
+		},
 	})
 
-	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Invalid URL format", http.StatusNotFound)
+	app.Use(middleware.NewLoggingMiddleware())
+	app.Use(middleware.NewGzipMiddleware())
+
+	app.Route("/tasks", func(router fiber.Router) {
+		router.Post("/", handler.CreateTask)
+		router.Get("/", handler.GetAllTasks)
+		router.Get("/:id", handler.GetTask)
+		router.Put("/:id", handler.UpdateTask)
+		router.Delete("/:id", handler.DeleteTask)
 	})
 
-	r.Route("/api/tasks", func(r chi.Router) {
-		r.Post("/", handler.CreateTask)
-		r.Get("/{task_id}", handler.GetTask)
-		r.Delete("/{task_id}", handler.DeleteTask)
-	})
-
-	return r
+	return app
 }

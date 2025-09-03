@@ -2,166 +2,281 @@ package service
 
 import (
 	"context"
-	"errors"
 	"testing"
+	"time"
 
-	mocks "github.com/a2sh3r/golang-task-api.git/internal/mocks/repository_mocks"
 	"github.com/a2sh3r/golang-task-api.git/internal/models"
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
-func TestTaskService_CreateTask(t *testing.T) {
-	type args struct {
-		title, description string
+type MockTaskRepository struct {
+	mock.Mock
+}
+
+func (m *MockTaskRepository) Create(ctx context.Context, task models.Task) error {
+	args := m.Called(ctx, task)
+	return args.Error(0)
+}
+
+func (m *MockTaskRepository) GetByID(ctx context.Context, id int) (*models.Task, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
 	}
+	return args.Get(0).(*models.Task), args.Error(1)
+}
+
+func (m *MockTaskRepository) GetAll(ctx context.Context) ([]models.Task, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.Task), args.Error(1)
+}
+
+func (m *MockTaskRepository) Update(ctx context.Context, id int, task models.Task) error {
+	args := m.Called(ctx, id, task)
+	return args.Error(0)
+}
+
+func (m *MockTaskRepository) Delete(ctx context.Context, id int) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+func TestTaskService_CreateTask(t *testing.T) {
 	tests := []struct {
-		name      string
-		args      args
-		mockSetup func(repo *mocks.MockTaskRepository)
-		wantErr   bool
+		name        string
+		title       string
+		description string
+		setupMock   func(*MockTaskRepository)
+		wantErr     bool
 	}{
 		{
-			name: "success",
-			args: args{"title1", "desc1"},
-			mockSetup: func(repo *mocks.MockTaskRepository) {
-				repo.EXPECT().
-					Create(gomock.Any(), gomock.AssignableToTypeOf(models.Task{})).
-					Return(nil)
+			name:        "successful task creation",
+			title:       "Test Task",
+			description: "Test Description",
+			setupMock: func(mockRepo *MockTaskRepository) {
+				mockRepo.On("Create", mock.Anything, mock.AnythingOfType("models.Task")).Return(nil)
 			},
 			wantErr: false,
 		},
 		{
-			name: "repo error",
-			args: args{"title2", "desc2"},
-			mockSetup: func(repo *mocks.MockTaskRepository) {
-				repo.EXPECT().
-					Create(gomock.Any(), gomock.AssignableToTypeOf(models.Task{})).
-					Return(errors.New("fail"))
-			},
-			wantErr: true,
+			name:        "empty title should fail",
+			title:       "",
+			description: "Test Description",
+			setupMock:   func(mockRepo *MockTaskRepository) {},
+			wantErr:     true,
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-			repo := mocks.NewMockTaskRepository(ctrl)
-			tt.mockSetup(repo)
-			svc := NewTaskService(repo)
-			_, err := svc.CreateTask(context.Background(), tt.args.title, tt.args.description)
+			mockRepo := new(MockTaskRepository)
+			tt.setupMock(mockRepo)
+
+			service := NewTaskService(mockRepo)
+			task, err := service.CreateTask(context.Background(), tt.title, tt.description)
+
 			if tt.wantErr {
 				assert.Error(t, err)
+				assert.Nil(t, task)
 			} else {
 				assert.NoError(t, err)
+				assert.NotNil(t, task)
+				assert.Equal(t, tt.title, task.Title)
+				assert.Equal(t, tt.description, task.Description)
+				assert.Equal(t, models.New, task.Status)
 			}
+
+			mockRepo.AssertExpectations(t)
 		})
 	}
 }
 
 func TestTaskService_GetTask(t *testing.T) {
-	type args struct{ id string }
 	tests := []struct {
 		name      string
-		args      args
-		mockSetup func(repo *mocks.MockTaskRepository)
-		wantOk    bool
+		id        string
+		setupMock func(*MockTaskRepository)
+		wantErr   bool
+		wantTask  *models.Task
+	}{
+		{
+			name: "successful task retrieval",
+			id:   "1",
+			setupMock: func(mockRepo *MockTaskRepository) {
+				expectedTask := &models.Task{
+					ID:          1,
+					Title:       "Test Task",
+					Description: "Test Description",
+					Status:      models.New,
+					CreatedAt:   time.Now(),
+					UpdatedAt:   time.Now(),
+				}
+				mockRepo.On("GetByID", mock.Anything, 1).Return(expectedTask, nil)
+			},
+			wantErr:  false,
+			wantTask: &models.Task{ID: 1, Title: "Test Task", Description: "Test Description", Status: models.New},
+		},
+		{
+			name:      "invalid id should fail",
+			id:        "invalid",
+			setupMock: func(mockRepo *MockTaskRepository) {},
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRepo := new(MockTaskRepository)
+			tt.setupMock(mockRepo)
+
+			service := NewTaskService(mockRepo)
+			task, err := service.GetTask(context.Background(), tt.id)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, task)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, task)
+				assert.Equal(t, tt.wantTask.ID, task.ID)
+				assert.Equal(t, tt.wantTask.Title, task.Title)
+			}
+
+			mockRepo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestTaskService_GetAllTasks(t *testing.T) {
+	mockRepo := new(MockTaskRepository)
+	expectedTasks := []models.Task{
+		{ID: 1, Title: "Task 1", Description: "Description 1", Status: models.New},
+		{ID: 2, Title: "Task 2", Description: "Description 2", Status: models.InProgress},
+	}
+	mockRepo.On("GetAll", mock.Anything).Return(expectedTasks, nil)
+
+	service := NewTaskService(mockRepo)
+	tasks, err := service.GetAllTasks(context.Background())
+
+	assert.NoError(t, err)
+	assert.Len(t, tasks, 2)
+	assert.Equal(t, expectedTasks[0].Title, tasks[0].Title)
+	assert.Equal(t, expectedTasks[1].Title, tasks[1].Title)
+
+	mockRepo.AssertExpectations(t)
+}
+
+func TestTaskService_UpdateTask(t *testing.T) {
+	tests := []struct {
+		name      string
+		id        string
+		request   models.UpdateTaskRequest
+		setupMock func(*MockTaskRepository)
 		wantErr   bool
 	}{
 		{
-			name: "found",
-			args: args{"id1"},
-			mockSetup: func(repo *mocks.MockTaskRepository) {
-				repo.EXPECT().
-					Get(gomock.Any(), "id1").
-					Return(models.Task{ID: "id1"}, true, nil)
+			name: "successful task update",
+			id:   "1",
+			request: models.UpdateTaskRequest{
+				Title:  stringPtr("Updated Title"),
+				Status: statusPtr(models.InProgress),
 			},
-			wantOk:  true,
+			setupMock: func(mockRepo *MockTaskRepository) {
+				existingTask := &models.Task{
+					ID:          1,
+					Title:       "Original Title",
+					Description: "Original Description",
+					Status:      models.New,
+					CreatedAt:   time.Now(),
+					UpdatedAt:   time.Now(),
+				}
+				mockRepo.On("GetByID", mock.Anything, 1).Return(existingTask, nil)
+				mockRepo.On("Update", mock.Anything, 1, mock.AnythingOfType("models.Task")).Return(nil)
+			},
 			wantErr: false,
 		},
 		{
-			name: "not found",
-			args: args{"id2"},
-			mockSetup: func(repo *mocks.MockTaskRepository) {
-				repo.EXPECT().
-					Get(gomock.Any(), "id2").
-					Return(models.Task{}, false, nil)
+			name: "invalid id should fail",
+			id:   "invalid",
+			request: models.UpdateTaskRequest{
+				Title: stringPtr("Updated Title"),
 			},
-			wantOk:  false,
-			wantErr: false,
-		},
-		{
-			name: "repo error",
-			args: args{"id3"},
-			mockSetup: func(repo *mocks.MockTaskRepository) {
-				repo.EXPECT().
-					Get(gomock.Any(), "id3").
-					Return(models.Task{}, false, errors.New("fail"))
-			},
-			wantOk:  false,
-			wantErr: true,
+			setupMock: func(mockRepo *MockTaskRepository) {},
+			wantErr:   true,
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-			repo := mocks.NewMockTaskRepository(ctrl)
-			tt.mockSetup(repo)
-			svc := NewTaskService(repo)
-			_, ok, err := svc.GetTask(context.Background(), tt.args.id)
-			assert.Equal(t, tt.wantOk, ok)
+			mockRepo := new(MockTaskRepository)
+			tt.setupMock(mockRepo)
+
+			service := NewTaskService(mockRepo)
+			task, err := service.UpdateTask(context.Background(), tt.id, tt.request)
+
 			if tt.wantErr {
 				assert.Error(t, err)
+				assert.Nil(t, task)
 			} else {
 				assert.NoError(t, err)
+				assert.NotNil(t, task)
 			}
+
+			mockRepo.AssertExpectations(t)
 		})
 	}
 }
 
 func TestTaskService_DeleteTask(t *testing.T) {
-	type args struct{ id string }
 	tests := []struct {
 		name      string
-		args      args
-		mockSetup func(repo *mocks.MockTaskRepository)
+		id        string
+		setupMock func(*MockTaskRepository)
 		wantErr   bool
 	}{
 		{
-			name: "success",
-			args: args{"id1"},
-			mockSetup: func(repo *mocks.MockTaskRepository) {
-				repo.EXPECT().
-					Delete(gomock.Any(), "id1").
-					Return(nil)
+			name: "successful task deletion",
+			id:   "1",
+			setupMock: func(mockRepo *MockTaskRepository) {
+				mockRepo.On("Delete", mock.Anything, 1).Return(nil)
 			},
 			wantErr: false,
 		},
 		{
-			name: "repo error",
-			args: args{"id2"},
-			mockSetup: func(repo *mocks.MockTaskRepository) {
-				repo.EXPECT().
-					Delete(gomock.Any(), "id2").
-					Return(errors.New("fail"))
-			},
-			wantErr: true,
+			name:      "invalid id should fail",
+			id:        "invalid",
+			setupMock: func(mockRepo *MockTaskRepository) {},
+			wantErr:   true,
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-			repo := mocks.NewMockTaskRepository(ctrl)
-			tt.mockSetup(repo)
-			svc := NewTaskService(repo)
-			err := svc.DeleteTask(context.Background(), tt.args.id)
+			mockRepo := new(MockTaskRepository)
+			tt.setupMock(mockRepo)
+
+			service := NewTaskService(mockRepo)
+			err := service.DeleteTask(context.Background(), tt.id)
+
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
 			}
+
+			mockRepo.AssertExpectations(t)
 		})
 	}
+}
+
+func stringPtr(s string) *string {
+	return &s
+}
+
+func statusPtr(s models.Status) *models.Status {
+	return &s
 }
