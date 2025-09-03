@@ -2,116 +2,304 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
-	"errors"
-	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
-	mocks "github.com/a2sh3r/golang-task-api.git/internal/mocks/service_mocks"
 	"github.com/a2sh3r/golang-task-api.git/internal/models"
-	"github.com/go-chi/chi/v5"
-	"github.com/golang/mock/gomock"
+	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
+
+type MockTaskService struct {
+	mock.Mock
+}
+
+func (m *MockTaskService) CreateTask(ctx context.Context, title, description string) (*models.Task, error) {
+	args := m.Called(ctx, title, description)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Task), args.Error(1)
+}
+
+func (m *MockTaskService) GetTask(ctx context.Context, id string) (*models.Task, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Task), args.Error(1)
+}
+
+func (m *MockTaskService) GetAllTasks(ctx context.Context) ([]models.Task, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.Task), args.Error(1)
+}
+
+func (m *MockTaskService) UpdateTask(ctx context.Context, id string, req models.UpdateTaskRequest) (*models.Task, error) {
+	args := m.Called(ctx, id, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Task), args.Error(1)
+}
+
+func (m *MockTaskService) DeleteTask(ctx context.Context, id string) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+func setupTestApp() *fiber.App {
+	app := fiber.New()
+	return app
+}
 
 func TestHandler_CreateTask(t *testing.T) {
 	tests := []struct {
-		name      string
-		body      map[string]string
-		mockSetup func(s *mocks.MockTaskService)
-		wantCode  int
+		name           string
+		requestBody    models.CreateTaskRequest
+		setupMock      func(*MockTaskService)
+		expectedStatus int
+		expectedBody   string
 	}{
 		{
-			name: "success",
-			body: map[string]string{"title": "t1", "description": "d1"},
-			mockSetup: func(s *mocks.MockTaskService) {
-				s.EXPECT().
-					CreateTask(gomock.Any(), "t1", "d1").
-					Return("id1", nil)
+			name: "successful task creation",
+			requestBody: models.CreateTaskRequest{
+				Title:       "Test Task",
+				Description: "Test Description",
 			},
-			wantCode: http.StatusOK,
+			setupMock: func(mockService *MockTaskService) {
+				expectedTask := &models.Task{
+					ID:          1,
+					Title:       "Test Task",
+					Description: "Test Description",
+					Status:      models.New,
+					CreatedAt:   time.Now(),
+					UpdatedAt:   time.Now(),
+				}
+				mockService.On("CreateTask", mock.Anything, "Test Task", "Test Description").Return(expectedTask, nil)
+			},
+			expectedStatus: fiber.StatusCreated,
 		},
 		{
-			name: "service error",
-			body: map[string]string{"title": "t2", "description": "d2"},
-			mockSetup: func(s *mocks.MockTaskService) {
-				s.EXPECT().
-					CreateTask(gomock.Any(), "t2", "d2").
-					Return("", assert.AnError)
+			name: "invalid request body",
+			requestBody: models.CreateTaskRequest{
+				Title:       "",
+				Description: "Test Description",
 			},
-			wantCode: http.StatusInternalServerError,
+			setupMock: func(mockService *MockTaskService) {
+				mockService.On("CreateTask", mock.Anything, "", "Test Description").Return(nil, assert.AnError)
+			},
+			expectedStatus: fiber.StatusInternalServerError,
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-			svc := mocks.NewMockTaskService(ctrl)
-			tt.mockSetup(svc)
-			h := NewHandler(svc)
-			body, _ := json.Marshal(tt.body)
-			req := httptest.NewRequest(http.MethodPost, "/api/tasks/", bytes.NewReader(body))
-			w := httptest.NewRecorder()
-			h.CreateTask(w, req)
-			assert.Equal(t, tt.wantCode, w.Code)
+			app := setupTestApp()
+			mockService := new(MockTaskService)
+			tt.setupMock(mockService)
+
+			handler := &Handler{taskService: mockService}
+			app.Post("/tasks", handler.CreateTask)
+
+			body, _ := json.Marshal(tt.requestBody)
+			req := httptest.NewRequest("POST", "/tasks", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, _ := app.Test(req)
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			mockService.AssertExpectations(t)
 		})
 	}
 }
 
+func TestHandler_GetAllTasks(t *testing.T) {
+	mockService := new(MockTaskService)
+	expectedTasks := []models.Task{
+		{ID: 1, Title: "Task 1", Description: "Description 1", Status: models.New},
+		{ID: 2, Title: "Task 2", Description: "Description 2", Status: models.InProgress},
+	}
+	mockService.On("GetAllTasks", mock.Anything).Return(expectedTasks, nil)
+
+	app := setupTestApp()
+	handler := &Handler{taskService: mockService}
+	app.Get("/tasks", handler.GetAllTasks)
+
+	req := httptest.NewRequest("GET", "/tasks", nil)
+	resp, _ := app.Test(req)
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	mockService.AssertExpectations(t)
+}
+
 func TestHandler_GetTask(t *testing.T) {
 	tests := []struct {
-		name      string
-		id        string
-		mockSetup func(s *mocks.MockTaskService)
-		wantCode  int
+		name           string
+		taskID         string
+		setupMock      func(*MockTaskService)
+		expectedStatus int
 	}{
 		{
-			name: "found",
-			id:   "id1",
-			mockSetup: func(s *mocks.MockTaskService) {
-				s.EXPECT().
-					GetTask(gomock.Any(), "id1").
-					Return(models.Task{ID: "id1"}, true, nil)
+			name:   "successful task retrieval",
+			taskID: "1",
+			setupMock: func(mockService *MockTaskService) {
+				expectedTask := &models.Task{
+					ID:          1,
+					Title:       "Test Task",
+					Description: "Test Description",
+					Status:      models.New,
+					CreatedAt:   time.Now(),
+					UpdatedAt:   time.Now(),
+				}
+				mockService.On("GetTask", mock.Anything, "1").Return(expectedTask, nil)
 			},
-			wantCode: http.StatusOK,
+			expectedStatus: fiber.StatusOK,
 		},
 		{
-			name: "not found",
-			id:   "id2",
-			mockSetup: func(s *mocks.MockTaskService) {
-				s.EXPECT().
-					GetTask(gomock.Any(), "id2").
-					Return(models.Task{}, false, nil)
+			name:   "task not found",
+			taskID: "999",
+			setupMock: func(mockService *MockTaskService) {
+				mockService.On("GetTask", mock.Anything, "999").Return(nil, assert.AnError)
 			},
-			wantCode: http.StatusNotFound,
-		},
-		{
-			name: "service error",
-			id:   "id3",
-			mockSetup: func(s *mocks.MockTaskService) {
-				s.EXPECT().
-					GetTask(gomock.Any(), "id3").
-					Return(models.Task{}, false, errors.New("fail"))
-			},
-			wantCode: http.StatusInternalServerError,
+			expectedStatus: fiber.StatusInternalServerError,
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-			svc := mocks.NewMockTaskService(ctrl)
-			tt.mockSetup(svc)
-			h := NewHandler(svc)
+			app := setupTestApp()
+			mockService := new(MockTaskService)
+			tt.setupMock(mockService)
 
-			r := chi.NewRouter()
-			r.Get("/api/tasks/{task_id}", h.GetTask)
+			handler := &Handler{taskService: mockService}
+			app.Get("/tasks/:id", handler.GetTask)
 
-			req := httptest.NewRequest(http.MethodGet, "/api/tasks/"+tt.id, nil)
-			w := httptest.NewRecorder()
-			r.ServeHTTP(w, req)
-			assert.Equal(t, tt.wantCode, w.Code)
+			req := httptest.NewRequest("GET", "/tasks/"+tt.taskID, nil)
+			resp, _ := app.Test(req)
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			mockService.AssertExpectations(t)
 		})
 	}
+}
+
+func TestHandler_UpdateTask(t *testing.T) {
+	tests := []struct {
+		name           string
+		taskID         string
+		requestBody    models.UpdateTaskRequest
+		setupMock      func(*MockTaskService)
+		expectedStatus int
+	}{
+		{
+			name:   "successful task update",
+			taskID: "1",
+			requestBody: models.UpdateTaskRequest{
+				Title:  stringPtr("Updated Title"),
+				Status: statusPtr(models.InProgress),
+			},
+			setupMock: func(mockService *MockTaskService) {
+				expectedTask := &models.Task{
+					ID:          1,
+					Title:       "Updated Title",
+					Description: "Original Description",
+					Status:      models.InProgress,
+					CreatedAt:   time.Now(),
+					UpdatedAt:   time.Now(),
+				}
+				mockService.On("UpdateTask", mock.Anything, "1", mock.AnythingOfType("models.UpdateTaskRequest")).Return(expectedTask, nil)
+			},
+			expectedStatus: fiber.StatusOK,
+		},
+		{
+			name:   "task not found",
+			taskID: "999",
+			requestBody: models.UpdateTaskRequest{
+				Title: stringPtr("Updated Title"),
+			},
+			setupMock: func(mockService *MockTaskService) {
+				mockService.On("UpdateTask", mock.Anything, "999", mock.AnythingOfType("models.UpdateTaskRequest")).Return(nil, assert.AnError)
+			},
+			expectedStatus: fiber.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := setupTestApp()
+			mockService := new(MockTaskService)
+			tt.setupMock(mockService)
+
+			handler := &Handler{taskService: mockService}
+			app.Put("/tasks/:id", handler.UpdateTask)
+
+			body, _ := json.Marshal(tt.requestBody)
+			req := httptest.NewRequest("PUT", "/tasks/"+tt.taskID, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, _ := app.Test(req)
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			mockService.AssertExpectations(t)
+		})
+	}
+}
+
+func TestHandler_DeleteTask(t *testing.T) {
+	tests := []struct {
+		name           string
+		taskID         string
+		setupMock      func(*MockTaskService)
+		expectedStatus int
+	}{
+		{
+			name:   "successful task deletion",
+			taskID: "1",
+			setupMock: func(mockService *MockTaskService) {
+				mockService.On("DeleteTask", mock.Anything, "1").Return(nil)
+			},
+			expectedStatus: fiber.StatusOK,
+		},
+		{
+			name:   "task not found",
+			taskID: "999",
+			setupMock: func(mockService *MockTaskService) {
+				mockService.On("DeleteTask", mock.Anything, "999").Return(assert.AnError)
+			},
+			expectedStatus: fiber.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := setupTestApp()
+			mockService := new(MockTaskService)
+			tt.setupMock(mockService)
+
+			handler := &Handler{taskService: mockService}
+			app.Delete("/tasks/:id", handler.DeleteTask)
+
+			req := httptest.NewRequest("DELETE", "/tasks/"+tt.taskID, nil)
+			resp, _ := app.Test(req)
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			mockService.AssertExpectations(t)
+		})
+	}
+}
+
+func stringPtr(s string) *string {
+	return &s
+}
+
+func statusPtr(s models.Status) *models.Status {
+	return &s
 }

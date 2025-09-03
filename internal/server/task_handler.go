@@ -1,72 +1,113 @@
 package server
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-
 	"github.com/a2sh3r/golang-task-api.git/internal/logger"
-	"github.com/go-chi/chi/v5"
+	"github.com/a2sh3r/golang-task-api.git/internal/models"
+	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
 )
 
-type TaskRequest struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
+func (h *Handler) CreateTask(c *fiber.Ctx) error {
+	var req models.CreateTaskRequest
+	if err := c.BodyParser(&req); err != nil {
+		logger.Log.Error("failed to parse request body", zap.Error(err))
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
+	}
+
+	task, err := h.taskService.CreateTask(c.Context(), req.Title, req.Description)
+	if err != nil {
+		logger.Log.Error("failed to create task", zap.Error(err))
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(task)
 }
 
-func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
-	var body TaskRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error": "%s"}`, err), http.StatusBadRequest)
-		logger.Log.Error("cant decode body", zap.Error(err))
-		return
-	}
-
-	id, err := h.taskService.CreateTask(r.Context(), body.Title, body.Description)
+func (h *Handler) GetAllTasks(c *fiber.Ctx) error {
+	tasks, err := h.taskService.GetAllTasks(c.Context())
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error": "%s"}`, err), http.StatusInternalServerError)
-		logger.Log.Error("error while creating task", zap.Error(err))
-		return
+		logger.Log.Error("failed to get tasks", zap.Error(err))
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(id)
+	return c.JSON(tasks)
 }
 
-func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "task_id")
-	task, exists, err := h.taskService.GetTask(r.Context(), id)
+func (h *Handler) GetTask(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Task ID is required",
+		})
+	}
 
+	task, err := h.taskService.GetTask(c.Context(), id)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error": "%s"}`, err), http.StatusInternalServerError)
-		logger.Log.Error("error while getting task", zap.Error(err))
-		return
+		logger.Log.Error("failed to get task", zap.Error(err))
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
 	}
 
-	if !exists {
-		http.Error(w, `{"error": "Task not found"}`, http.StatusNotFound)
-		logger.Log.Error("task does not exist", zap.Error(err))
-		return
+	if task == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "Task not found",
+		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(task)
+	return c.JSON(task)
 }
 
-func (h *Handler) DeleteTask(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "task_id")
-	err := h.taskService.DeleteTask(r.Context(), id)
-
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error": "%s"}`, err), http.StatusInternalServerError)
-		logger.Log.Error("error while deleting task", zap.Error(err))
-		return
+func (h *Handler) UpdateTask(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Task ID is required",
+		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Task deleted"})
+	var req models.UpdateTaskRequest
+	if err := c.BodyParser(&req); err != nil {
+		logger.Log.Error("failed to parse request body", zap.Error(err))
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
+	}
+
+	task, err := h.taskService.UpdateTask(c.Context(), id, req)
+	if err != nil {
+		logger.Log.Error("failed to update task", zap.Error(err))
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(task)
+}
+
+func (h *Handler) DeleteTask(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Task ID is required",
+		})
+	}
+
+	err := h.taskService.DeleteTask(c.Context(), id)
+	if err != nil {
+		logger.Log.Error("failed to delete task", zap.Error(err))
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Task deleted successfully",
+	})
 }

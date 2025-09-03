@@ -30,7 +30,7 @@ func TestLoadConfig_Env(t *testing.T) {
 }
 
 func TestConfig_ParseFlags(t *testing.T) {
-	// Сбросим флаги, чтобы не мешали другие тесты
+
 	os.Args = []string{"cmd", "-a", "0.0.0.0:1234", "-f", "/tmp/flag.json", "-i", "77"}
 	cfg := &Config{}
 	cfg.ParseFlags()
